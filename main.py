@@ -1,74 +1,106 @@
-from nicegui import ui
-import json as jsonlib
-import sqlite3
-import nicegui
+from quart import Quart, request, render_template, make_response
+from sqlite3 import connect
+
+database = connect("data/database.db")
+database.execute("CREATE TABLE IF NOT EXISTS intents (intent TEXT PRIMARY KEY)")
+database.execute("CREATE TABLE IF NOT EXISTS inputs (input TEXT UNIQUE, intent TEXT)")
+
+app = Quart(__name__)
 
 
-class App():
-    def __init__(self):
-        self.knowledge_panel = None
-        self.db = sqlite3.connect('knowledge.db')
-        self.curser = self.db.cursor()
-        self.curser.execute('CREATE TABLE IF NOT EXISTS knowledge (label TEXT, content TEXT UNIQUE)')
-        self.curser.execute('CREATE TABLE IF NOT EXISTS labels (label TEXT)')
-
-        with ui.row():
-            self.logo = ui.avatar('🤗', text_color='grey-11', square=True)
-            self.title = ui.label("HuggingUI")
-
-        with ui.tabs().classes('w-full') as tabs:
-            ui.tab('Knowledge', icon='school')
-            ui.tab('Create', icon='create')
-            ui.tab('Upload', icon='upload')
-
-        with ui.tab_panels(tabs, value='Create').classes('w-full'):
-            ui.update()
-            self.knowledge_panel = ui.tab_panel('Knowledge')
-            with self.knowledge_panel:
-                for row in self.curser.execute('SELECT * FROM knowledge'):
-                    with ui.expansion(row[1]):
-                        ui.label(row[0])
-            with ui.tab_panel('Create'):
-                self.content_input = ui.input(label='Content')
-                self.label_input = ui.input(label='Label')
-                self.submit = ui.button('Submit', on_click=self.submit)
-            with ui.tab_panel('Upload'):
-                self.uploader = ui.upload(auto_upload=True, on_upload=self.upload, label='Upload JSONL')
-
-    def submit(self):
-        if self.content_input.value and self.label_input.value:
-            try:
-                self.curser.execute('INSERT INTO knowledge (label, content) VALUES (?, ?)', (self.label_input.value,
-                                                                                             self.content_input.value))
-                self.db.commit()
-                self.knowledge_panel.default_slot.append( ui.expansion(self.content_input.value).default_slot.children.append(ui.label(self.label_input.value)))
-
-                self.content_input.value = ''
-                self.label_input.value = ''
-            except sqlite3.IntegrityError:
-                ui.notify('This content already exists.')
-        else:
-            ui.notify('Please fill out both fields.')
-
-    def upload(self, file: nicegui.elements.upload.UploadEventArguments):
-        if file.name.split(".")[1] == 'jsonl':
-            try:
-                contents = list(file.content)
-                for json in contents:
-                    valid_json = jsonlib.loads(json)
-                    self.curser.execute('INSERT INTO knowledge (label, content) VALUES (?, ?)', (valid_json['label'],
-                                                                                                 valid_json['content']))
-                self.db.commit()
-            except jsonlib.JSONDecodeError:
-                ui.notify('Invalid JSONL file')
-            except KeyError:
-                ui.notify('The proper keys could not be found.')
-        else:
-            ui.notify('Invalid file type')
-
-    def start(self):
-        ui.run()
+@app.get("/v1/intents")
+async def get_intents():
+    intents = database.execute("SELECT * FROM intents").fetchall()
+    return intents
 
 
-app = App()
-ui.run()
+@app.post("/v1/intents")
+async def create_intent():
+    data = await request.form
+    intent = database.execute("INSERT INTO intents VALUES(?)", (data['intent'],)).fetchone()
+    database.commit()
+    return {"input": intent}
+
+
+@app.delete("/v1/intents/<intent>")
+async def delete_intent(intent):
+    intent = database.execute("DELETE FROM intents WHERE intent = ?", (intent,)).fetchone()
+    database.execute("DELETE FROM inputs WHERE intent = ?", (intent,))
+    database.commit()
+    return {"input": intent}
+
+
+@app.put("/v1/intents")
+async def put_intent():
+    data = await request.form
+    intent = database.execute("UPDATE intents SET intent = ? WHERE input = ?", (data['intent'],
+                                                                                data['input'])).fetchone()
+    database.commit()
+    return {"input": intent}
+
+
+@app.get("/v1/training")
+async def get_training():
+    training = database.execute("SELECT * FROM inputs").fetchall()
+    return training
+
+
+@app.post("/v1/training")
+async def post_training():
+    data = await request.form
+    data = database.execute("INSERT INTO inputs VALUES(?, ?)", (data['input'], data['intent'])).fetchone()
+    database.commit()
+    return {"input": data}
+
+
+@app.delete("/v1/training/<input>")
+async def delete_training(input: str):
+    data = database.execute("DELETE FROM inputs WHERE input = ?", (input,)).fetchone()
+    database.commit()
+    return {"input": data}
+
+
+@app.put("/v1/training/<input>")
+async def put_training(input: str):
+    data = await request.get_json()
+    intent = database.execute("SELECT * FROM intents WHERE intent = ?", (data['intent'],)).fetchone()
+    if not intent:
+        database.execute("INSERT INTO intents VALUES(?)", (data['intent'],))
+    data = database.execute("UPDATE inputs SET intent = ? WHERE input = ?", (data['intent'], input)).fetchone()
+    database.commit()
+    return {"input": data}
+
+
+@app.get("/v1/export/csv")
+async def get_csv_export():
+    training = database.execute("SELECT * FROM inputs").fetchall()
+    csvOutput = "content,label\r\n"
+    for row in training:
+        csvOutput += f"{row[0].replace(',', '')}, {row[1].replace(',', '')}\r\n"
+
+    return await make_response(csvOutput, 200, {'Content-Type': 'text/csv'})
+
+
+@app.get("/v1/export/jsonl")
+async def get_json_export():
+    training = database.execute("SELECT * FROM inputs").fetchall()
+    jsonOutput = "\r\n"
+    for row in training:
+        content = row[0].replace('"', '')
+        label = row[1].replace('"', '')
+        jsonOutput += f"{{\"content\": \"{content}\", \"label\": \"{label}\"}},\r\n"
+
+    jsonOutput = jsonOutput[:-3] + "\r\n"
+    return await make_response(jsonOutput, 200, {'Content-Type': 'application/json'})
+
+
+@app.route('/')
+async def index():
+    return await render_template('index.html')
+
+
+def run() -> None:
+    app.run()
+
+
+run()

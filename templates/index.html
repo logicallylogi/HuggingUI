@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>AI-UI</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/water.css@2/out/water.min.css">
+</head>
+<body>
+<h1>AI-UI</h1>
+<hr />
+<details>
+    <summary>Create Sample</summary>
+    <div>
+        <form action="/v1/training" method="post">
+            <label for="input">Message</label>
+            <textarea id="input" name="input"></textarea>
+
+            <label for="intent">Intent</label>
+            <select id="intent" name="intent">
+
+            </select>
+            <script>
+                fetch('/v1/intents')
+                    .then(response => response.json())
+                    .then(data => {
+                        const select = document.getElementById('intent');
+                        data.forEach(intent => {
+                            const option = document.createElement('option');
+                            option.value = intent;
+                            option.text = intent;
+                            select.appendChild(option);
+                        });
+                    });
+            </script>
+            <button type="submit">Learn</button>
+        </form>
+    </div>
+</details>
+<details>
+    <summary>Create Intent</summary>
+    <div>
+       <h4>Create a new intent</h4>
+         <form method="post" action="/v1/intents">
+              <label for="new_intent">Intent</label>
+              <input type="text" id="new_intent" name="intent" />
+              <button type="submit">Create</button>
+         </form>
+    </div>
+</details>
+<details>
+    <summary>View Samples</summary>
+    <table>
+        <thead>
+            <tr>
+                <th>Input</th>
+                <th>Intent</th>
+                <th>Update</th>
+                <th>Delete</th>
+            </tr>
+        </thead>
+        <tbody id="inputs">
+        </tbody>
+    </table>
+    <script>
+        const inputs = document.getElementById('inputs');
+    fetch('/v1/training')
+        .then(response => response.json())
+        .then(data => {
+            console.dir(data);
+            data.forEach(input => {
+                const row = document.createElement('tr');
+                const inputCell = document.createElement('td');
+                inputCell.innerText = input[0];
+                row.appendChild(inputCell);
+                const intentCell = document.createElement('td');
+                intentCell.innerText = input[1];
+                row.appendChild(intentCell);
+                const updateCell = document.createElement('td');
+                const updateButton = document.createElement('button');
+                updateButton.innerText = 'Update';
+                updateButton.onclick = () => {
+                    const intent = prompt('Intent', input[1]);
+                    if (intent) {
+                        fetch(`/v1/training/${input[0]}`, {
+                            method: 'PUT',
+                            headers: {
+                                'Content-Type': 'application/json'
+                            },
+                            body: JSON.stringify({intent:intent})
+                        })
+                            .then(response => response.json())
+                            .then(data => {
+                                intentCell.innerText = intent;
+                            });
+                    }
+                };
+                updateCell.appendChild(updateButton);
+                row.appendChild(updateCell);
+                const deleteCell = document.createElement('td');
+                const deleteButton = document.createElement('button');
+                deleteButton.innerText = 'Delete';
+                deleteButton.onclick = () => {
+                    fetch(`/v1/training/${input[0]}`, {
+                        method: 'DELETE',
+                    })
+                        .then(response => response.json())
+                        .then(data => {
+                            row.remove();
+                        });
+                };
+                deleteCell.appendChild(deleteButton);
+                row.appendChild(deleteCell);
+                inputs.appendChild(row);
+            });
+        });
+    </script>
+</details>
+<details>
+    <summary>View Intents</summary>
+    <div>
+        <table>
+            <thead>
+                <tr>
+                    <th>Intent</th>
+                    <th>Delete</th>
+                </tr>
+            </thead>
+            <tbody id="intents">
+            </tbody>
+        </table>
+        <script>
+            fetch("/v1/intents")
+                .then(response => response.json())
+                .then(data => {
+                    const intents = document.getElementById('intents');
+                    data.forEach(intent => {
+                        const row = document.createElement('tr');
+                        const intentCell = document.createElement('td');
+                        intentCell.innerText = intent;
+                        row.appendChild(intentCell);
+                        const deleteCell = document.createElement('td');
+                        const deleteButton = document.createElement('button');
+                        deleteButton.innerText = 'Delete';
+                        deleteButton.onclick = () => {
+                            fetch(`/v1/intents/${intent}`, {
+                                method: 'DELETE',
+                            })
+                                .then(response => response.json())
+                                .then(data => {
+                                    row.remove();
+                                });
+                        };
+                        deleteCell.appendChild(deleteButton);
+                        row.appendChild(deleteCell);
+                        intents.appendChild(row);
+                    });
+                });
+        </script>
+    </div>
+</details>
+<details>
+    <summary>Upload Data</summary>
+    <div>
+       <h4>Upload JSONL</h4>
+        <label for="file">File</label>
+        <input type="file" id="file" name="file" />
+        <button id="upload_file">Upload</button>
+        <script>
+            const uploadFile = document.getElementById('upload_file');
+            uploadFile.onclick = () => {
+                const file = document.getElementById('file').files[0];
+                const fileData = new File([file], file.name, {type: file.type});
+                fileData.text().then(data => {
+                    data.split("\n").forEach(line => {
+                        const data = JSON.parse(line);
+                        const formData = new FormData();
+                        formData.set('input', data.input);
+                        formData.set('intent', data.intent);
+                        const req = new XMLHttpRequest();
+                        req.open("POST", "/v1/training");
+                        req.send(formData);
+                    });
+                });
+            };
+        </script>
+    </div>
+</details>
+</body>
+</html>
